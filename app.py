@@ -11,13 +11,20 @@ st.write("Nahrajte exportní soubor a stáhněte si upravenou uzávěrku.")
 uploaded_file = st.file_uploader("Vyberte soubor (Excel nebo CSV)", type=["xls", "xlsx", "csv"])
 
 if uploaded_file:
-    try:
-        # Načtení dat
+    # Načtení dat (vylepšená verze s řešením kódování)
         try:
+            # 1. Zkusíme klasický Excel (.xlsx, .xls)
             df = pd.read_excel(uploaded_file)
         except:
-            df = pd.read_csv(uploaded_file, sep=None, engine='python', skipinitialspace=True)
-
+            # 2. Pokud to selže, je to CSV. Zkusíme české kódování (Windows-1250)
+            try:
+                uploaded_file.seek(0) # Vrátíme se na začátek souboru
+                df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='cp1250', skipinitialspace=True)
+            except:
+                # 3. Pokud i to selže, zkusíme standardní UTF-8
+                uploaded_file.seek(0)
+                df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='utf-8', skipinitialspace=True)
+                
         df.columns = [str(c).strip() for c in df.columns]
         
         # Detekce hlavičky

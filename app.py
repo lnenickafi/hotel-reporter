@@ -17,24 +17,34 @@ if uploaded_file:
         
         # 1. NAČTENÍ DAT
         try:
-            # Pokus o čistý Excel
+            # Pokus o Excel (ten na newline chyby netrpí)
             df = pd.read_excel(io.BytesIO(file_bytes))
         except:
-            # Pokud selže, detekujeme kódování a čteme jako text (CSV)
+            # Pokud je to CSV/Text, musíme být opatrní na kódování a nové řádky
             res = chardet.detect(file_bytes)
             enc = res['encoding'] if res['encoding'] else 'cp1250'
+            
             try:
-                # errors='replace' zajistí, že se aplikace nesekne na divných znacích
+                # Dekódování bajtů na text s ošetřením chyb
                 decoded = file_bytes.decode(enc, errors='replace')
-                df = pd.read_csv(io.StringIO(decoded), sep=None, engine='python', skipinitialspace=True)
-            except:
-                decoded = file_bytes.decode('cp1250', errors='replace')
-                df = pd.read_csv(io.StringIO(decoded), sep=None, engine='python', skipinitialspace=True)
+                
+                # Čtení CSV z textového streamu
+                # Používáme StringIO, který simuluje otevřený soubor
+                df = pd.read_csv(
+                    io.StringIO(decoded), 
+                    sep=None, 
+                    engine='python', 
+                    skipinitialspace=True,
+                    on_bad_lines='warn' # Přeskočí/varuje u rozbitých řádků místo pádu
+                )
+            except Exception as e:
+                st.error(f"Nepodařilo se přečíst CSV: {e}")
+                st.stop()
 
-        # Vyčištění názvů sloupců (oříznutí mezer)
+        # Vyčištění názvů sloupců
         df.columns = [str(c).strip() for c in df.columns]
 
-        # 2. HLEDÁNÍ HLAVIČKY (pokud je tabulka posunutá)
+        # 2. HLEDÁNÍ HLAVIČKY
         if 'Vystaveno' not in df.columns:
             found = False
             for i in range(min(20, len(df))):
@@ -71,7 +81,6 @@ if uploaded_file:
         avail = [c for c in mapuj.keys() if c in df_f.columns]
         df_final = df_f[avail].rename(columns=mapuj)
 
-        # Převod na čísla pro výpočty
         for col in ["Základ 0%", "DPH - 12%", "DPH 21%", "Celkem bez DPH", "Celkem s DPH"]:
             if col in df_final.columns:
                 df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
@@ -95,7 +104,6 @@ if uploaded_file:
                 fr, lr = 4, 4 + n_rows - 1
                 sr = lr + 2
                 
-                # Dynamické vzorce (předpokládáme sloupce E pro úhradu a K pro celkem)
                 f_hot = f'=SUMIF(E{fr}:E{lr}, "*Hotově*", K{fr}:K{lr})'
                 f_kar = f'=SUMIF(E{fr}:E{lr}, "*Kartou*", K{fr}:K{lr})'
                 
@@ -106,7 +114,7 @@ if uploaded_file:
 
         st.success("Report úspěšně vytvořen!")
         st.download_button(
-            label="📥 Stáhnout upravený Excel",
+            label="📥 Stáhnout Excel",
             data=output.getvalue(),
             file_name=f"Report_{d1_txt}{d2_txt}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

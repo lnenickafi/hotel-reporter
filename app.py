@@ -6,41 +6,49 @@ from datetime import datetime, time
 st.set_page_config(page_title="Hotelový Reportér", page_icon="🏨")
 st.title("🏨 Hotelový Reportér")
 
-with st.expander("💡 INSTRUKCE", expanded=True):
-    st.write("Nahrajte soubor, který jste v Excelu uložili jako 'Sešit Excel (.xlsx)'.")
+with st.expander("💡 POSLEDNÍ KROK K ÚSPĚCHU", expanded=True):
+    st.write("Nahrajte soubor .xlsx (uložený v Excelu jako Sešit Excel).")
 
 uploaded_file = st.file_uploader("Nahrajte .xlsx soubor", type=["xlsx"])
 
 if uploaded_file:
     try:
-        # 1. NAČTENÍ XLSX
-        df = pd.read_excel(uploaded_file)
+        # 1. NAČTENÍ XLSX - Načteme surová data bez hlavičky
+        df = pd.read_excel(uploaded_file, header=None)
 
-        # 2. VYČIŠTĚNÍ NÁZVŮ SLOUPCŮ (Zásadní krok!)
-        # Odstraní mezery na začátku/konci a uvozovky ze všech názvů sloupců
-        df.columns = [str(c).strip().replace('"', '') for c in df.columns]
-
-        # 3. KONTROLA A PŘEVOD DATA
-        # Hledáme sloupec Vystaveno (i kdyby se jmenoval trochu jinak)
-        vyst_col = next((c for c in df.columns if "Vystaveno" in c), None)
+        # 2. AUTOMATICKÁ DETEKCE HLAVIČKY A SLOUPCŮ
+        # Hledáme řádek, kde je slovo "Vystaveno"
+        header_row_idx = None
+        vystaveno_col_idx = None
         
-        if not vyst_col:
-            st.error(f"❌ Sloupec 'Vystaveno' nenalezen. Dostupné sloupce jsou: {', '.join(df.columns[:5])}...")
+        for i in range(len(df)):
+            row = [str(x).strip() for x in df.iloc[i].values]
+            for idx, val in enumerate(row):
+                if "Vystaveno" in val:
+                    header_row_idx = i
+                    vystaveno_col_idx = idx
+                    break
+            if header_row_idx is not None:
+                break
+        
+        if header_row_idx is None:
+            st.error("❌ V souboru nebyl nalezen sloupec 'Vystaveno'.")
             st.stop()
 
-        # Převod na datum - bereme Series (1D pole), abychom se vyhnuli chybě 'arg must be a list'
-        # Použijeme .squeeze(), aby to byl vždy jeden sloupec
-        date_series = df[vyst_col]
-        if isinstance(date_series, pd.DataFrame):
-            date_series = date_series.iloc[:, 0]
+        # Nastavíme názvy sloupců z nalezeného řádku a ořízneme data
+        df.columns = [str(c).strip() for c in df.iloc[header_row_idx]]
+        df = df.iloc[header_row_idx + 1:].reset_index(drop=True)
 
-        df['dt_fixed'] = pd.to_datetime(date_series, dayfirst=True, errors='coerce')
+        # 3. PŘEVOD DATA - Tady opravujeme chybu 'arg must be a list'
+        # Použijeme iloc a index, abychom měli 100% jistotu, že bereme 1D pole
+        raw_dates = df.iloc[:, vystaveno_col_idx]
         
-        # Odstranění řádků bez data (patičky, prázdné řádky)
+        # Převedeme na datum (errors='coerce' vymaže neplatné řádky/patičky)
+        df['dt_fixed'] = pd.to_datetime(raw_dates, dayfirst=True, errors='coerce')
         df = df.dropna(subset=['dt_fixed'])
 
         if df.empty:
-            st.warning("⚠️ V souboru nebyla nalezena žádná platná data k seřazení.")
+            st.warning("⚠️ Žádná platná data k seřazení (zkontrolujte formát data).")
             st.stop()
 
         # 4. FILTRACE ČASU (10:00 - 12:00 druhý den)
@@ -50,7 +58,7 @@ if uploaded_file:
         
         df_f = df[(df['dt_fixed'] >= start_range) & (df['dt_fixed'] <= end_range)].copy()
 
-        # 5. MAPOVÁNÍ SLOUPCŮ
+        # 5. DYNAMICKÝ VÝBĚR SLOUPCŮ PRO FINÁLNÍ TABULKU
         mapping = {
             "Vystaveno": "Vystaveno",
             "Stav": "Stav",
@@ -62,20 +70,21 @@ if uploaded_file:
             "Celkem s DPH": "Celkem s DPH"
         }
         
-        # Najdeme reálné sloupce v souboru podle klíčových slov
-        final_cols_map = {}
-        for real_c in df_f.columns:
-            for key, target in mapping.items():
-                if key.lower() in str(real_c).lower():
-                    final_cols_map[real_c] = target
+        final_cols = []
+        for key, target in mapping.items():
+            for col_name in df_f.columns:
+                if key.lower() in str(col_name).lower():
+                    df_f = df_f.rename(columns={col_name: target})
+                    final_cols.append(target)
                     break
         
-        df_final = df_f[list(final_cols_map.keys())].rename(columns=final_cols_map)
+        # Odstraníme případné duplicity v názvech, které by dělaly neplechu
+        final_df = df_f[list(dict.fromkeys(final_cols))].copy()
 
-        # Čištění čísel (v XLSX už bývají čísla, ale pro jistotu)
-        for col in df_final.columns:
+        # Čištění čísel
+        for col in final_df.columns:
             if any(x in col for x in ["Základ", "DPH", "Celkem"]):
-                df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
+                final_df[col] = pd.to_numeric(final_df[col], errors='coerce').fillna(0)
 
         # 6. EXPORT DO EXCELU
         output = io.BytesIO()
@@ -85,32 +94,24 @@ if uploaded_file:
             
             d1, d2 = start_range.strftime("%d.%m."), end_range.strftime("%d.%m.%Y")
             ws.write('B1', f"Tržba {d1} - {d2}", f_bold)
-            df_final.to_excel(writer, sheet_name='Report', index=False, startrow=2)
+            final_df.to_excel(writer, sheet_name='Report', index=False, startrow=2)
             
-            # Dynamické součty SUMIF
-            n = len(df_final)
+            # SUMIF vzorce
+            n = len(final_df)
             if n > 0:
                 fr, lr, sr = 4, 4 + n - 1, 4 + n + 1
                 try:
-                    c_idx = list(df_final.columns)
-                    # Najdeme písmena sloupců pro vzorec
-                    p_col = chr(65 + c_idx.index("Forma úhrady"))
-                    t_col = chr(65 + c_idx.index("Celkem s DPH"))
-                    
+                    cols = list(final_df.columns)
+                    p_letter = chr(65 + cols.index("Forma úhrady"))
+                    t_letter = chr(65 + cols.index("Celkem s DPH"))
                     ws.write(sr, 2, "Hotovost celkem:", f_bold)
-                    ws.write_formula(sr, 3, f'=SUMIF({p_col}{fr}:{p_col}{lr}, "*Hotově*", {t_col}{fr}:{t_col}{lr})', f_num)
+                    ws.write_formula(sr, 3, f'=SUMIF({p_letter}{fr}:{p_letter}{lr}, "*Hotově*", {t_letter}{fr}:{t_letter}{lr})', f_num)
                     ws.write(sr + 1, 2, "Karty celkem:", f_bold)
-                    ws.write_formula(sr + 1, 3, f'=SUMIF({p_col}{fr}:{p_col}{lr}, "*Kartou*", {t_col}{fr}:{t_col}{lr})', f_num)
-                except:
-                    pass
+                    ws.write_formula(sr + 1, 3, f'=SUMIF({p_letter}{fr}:{p_letter}{lr}, "*Kartou*", {t_letter}{fr}:{t_letter}{lr})', f_num)
+                except: pass
 
         st.success("✅ Report úspěšně vytvořen!")
-        st.download_button(
-            label="📥 Stáhnout upravený Excel",
-            data=output.getvalue(),
-            file_name=f"Report_{d1}{d2}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        st.download_button("📥 Stáhnout Excel", output.getvalue(), f"Uzaverka_{d1}{d2}.xlsx")
 
     except Exception as e:
-        st.error(f"Chyba při zpracování: {e}")
+        st.error(f"Kritická chyba: {e}")

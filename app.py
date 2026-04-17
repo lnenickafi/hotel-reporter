@@ -4,9 +4,9 @@ import io
 import re
 from datetime import datetime, time
 
-st.set_page_config(page_title="Hotelový Reportér", page_icon="🏨")
+st.set_page_config(page_title="Reportér úzávěrky", page_icon="🏨")
 
-st.title("🏨 Hotelový Reportér")
+st.title("🏨 Uzávěrka tržeb")
 
 st.markdown("""
 ### 💡 Jak nahrát data správně?
@@ -125,9 +125,9 @@ if uploaded_file:
             n = len(df_final)
             if n > 0:
                 fr, lr, sr = 4, 4 + n - 1, 4 + n + 1
-                ws.write(sr, 2, "Hotovost celkem:", f_bold)
+                ws.write(sr, 2, "Hotově:", f_bold)
                 ws.write_formula(sr, 3, f'=SUMIF(E{fr}:E{lr}, "*Hotově*", K{fr}:K{lr})', f_num)
-                ws.write(sr + 1, 2, "Kreditní karty celkem:", f_bold)
+                ws.write(sr + 1, 2, "Kred. kartou:", f_bold)
                 ws.write_formula(sr + 1, 3, f'=SUMIF(E{fr}:E{lr}, "*Kartou*", K{fr}:K{lr})', f_num)
             
             ws.set_column('A:K', 18)

@@ -9,8 +9,7 @@ st.set_page_config(page_title="Hotelový Reportér", page_icon="🏨")
 st.title("🏨 Hotelový Reportér")
 
 st.info("""
-**💡 Instrukce:** Nahrávejte soubor uložený v Excelu jako **Sešit Excel (.xlsx)**. 
-Kód je nastaven tak, aby si poradil s čárkami, mezerami i filtry v exportu.
+**💡 Postup:** Export XLS -> Otevřít v Excelu -> Uložit jako **Sešit Excel (.xlsx)** -> Nahrát sem.
 """)
 
 uploaded_file = st.file_uploader("Nahrajte .xlsx soubor", type=["xlsx"])

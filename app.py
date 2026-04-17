@@ -8,8 +8,14 @@ st.set_page_config(page_title="Hotelový Reportér", page_icon="🏨")
 
 st.title("🏨 Hotelový Reportér")
 
-st.info("""
-**💡 Postup:** Export XLS -> Otevřít v Excelu -> Uložit jako **Sešit Excel (.xlsx)** -> Nahrát sem.
+st.markdown("""
+### 💡 Jak nahrát data správně?
+Pro správné fungování reportu postupujte takto:
+1. Vyexportujte data z hotelového systému (soubor `.xls`).
+2. Otevřete tento soubor v **Excelu**.
+3. Klikněte na **Soubor** -> **Uložit jako**.
+4. Zvolte formát **Sešit Excel (*.xlsx)** a uložte.
+5. Tento nový soubor nahrajte níže.
 """)
 
 uploaded_file = st.file_uploader("Nahrajte .xlsx soubor", type=["xlsx"])

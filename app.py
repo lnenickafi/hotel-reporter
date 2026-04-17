@@ -6,123 +6,93 @@ from datetime import datetime, time
 
 st.set_page_config(page_title="Hotelový Reportér", page_icon="🏨")
 st.title("🏨 Hotelový Reportér")
-st.write("Nahrajte exportní soubor a stáhněte si upravenou uzávěrku.")
+st.write("Nahrajte raw exportní soubor.")
 
 uploaded_file = st.file_uploader("Soubor (XLS, XLSX nebo CSV)", type=["xls", "xlsx", "csv"])
 
 if uploaded_file:
     try:
         file_bytes = uploaded_file.read()
-        df_raw = None
-
+        
         # 1. NAČTENÍ DAT
         try:
             # Zkusíme Excel
-            df_raw = pd.read_excel(io.BytesIO(file_bytes), header=None)
+            df = pd.read_excel(io.BytesIO(file_bytes))
         except:
-            # Pokud selže, načteme jako CSV/Text
+            # Pokud je to CSV/Text, detekujeme kódování
             res = chardet.detect(file_bytes)
             enc = res['encoding'] if res['encoding'] else 'cp1250'
             text_data = file_bytes.decode(enc, errors='replace')
-            lines = text_data.splitlines()
             
-            # Najdeme řádek s hlavičkou a určíme oddělovač
-            h_idx = -1
-            sep = ','
-            for i, line in enumerate(lines):
-                if "Vystaveno" in line:
-                    h_idx = i
-                    # Detekce oddělovače (středník vs čárka)
-                    if line.count(';') > line.count(','):
-                        sep = ';'
-                    break
-            
-            if h_idx == -1:
-                st.error("Sloupec 'Vystaveno' nebyl nalezen v textovém souboru.")
-                st.stop()
-                
-            csv_part = "\n".join(lines[h_idx:])
-            df_raw = pd.read_csv(io.StringIO(csv_part), sep=sep, engine='python', on_bad_lines='skip')
+            # Přečteme data s automatickou detekcí oddělovače (tabulátor/středník/čárka)
+            df = pd.read_csv(io.StringIO(text_data), sep=None, engine='python', skipinitialspace=True)
 
-        # 2. AGRESIVNÍ ČIŠTĚNÍ HLAVIČEK
-        # Odstraníme uvozovky, mezery a převedeme na malá písmena pro snadné hledání
-        df_raw.columns = [str(c).replace('"', '').strip() for c in df_raw.columns]
+        # Vyčištění názvů sloupců (odstranění mezer a uvozovek)
+        df.columns = [str(c).strip().replace('"', '') for c in df.columns]
 
-        # Najdeme sloupec s datem (hledáme cokoliv, co obsahuje 'vystaveno')
-        date_col = next((c for c in df_raw.columns if "vystaveno" in c.lower()), None)
-        
-        if not date_col:
-            # Pokud jsme ho nenašli v hlavičce, zkusíme prohledat první řádky dat
-            for i in range(min(5, len(df_raw))):
-                row = [str(x).lower() for x in df_raw.iloc[i].values]
-                if any("vystaveno" in r for r in row):
-                    # Přestavíme DF od tohoto řádku
-                    df_raw.columns = [str(x).replace('"', '').strip() for x in df_raw.iloc[i].values]
-                    df_raw = df_raw.iloc[i+1:].reset_index(drop=True)
-                    date_col = next((c for c in df_raw.columns if "vystaveno" in c.lower()), None)
-                    break
-
-        if not date_col:
-            st.error("Sloupec 'Vystaveno' nebyl nalezen. Zkuste soubor v Excelu uložit jako .xlsx.")
+        # 2. KONTROLA SLOUPCE
+        if 'Vystaveno' not in df.columns:
+            st.error(f"Sloupec 'Vystaveno' nebyl nalezen. Sloupce v souboru jsou: {', '.join(df.columns)}")
             st.stop()
 
-        # 3. FILTRACE ČASU (10:00 - 12:00)
-        df_raw['dt'] = pd.to_datetime(df_raw[date_col], dayfirst=True, errors='coerce')
-        df_raw = df_raw.dropna(subset=['dt'])
+        # 3. FILTRACE ČASU (10:00 - 12:00 druhý den)
+        df['dt'] = pd.to_datetime(df['Vystaveno'], dayfirst=True, errors='coerce')
+        df = df.dropna(subset=['dt'])
         
-        min_d = df_raw['dt'].min().date()
-        st_t = datetime.combine(min_d, time(10, 0, 0))
-        en_t = datetime.combine(min_d + pd.Timedelta(days=1), time(12, 0, 0))
-        df_f = df_raw[(df_raw['dt'] >= st_t) & (df_raw['dt'] <= en_t)].copy()
+        min_date = df['dt'].min().date()
+        start_t = datetime.combine(min_date, time(10, 0, 0))
+        end_t = datetime.combine(min_date + pd.Timedelta(days=1), time(12, 0, 0))
+        
+        df_f = df[(df['dt'] >= start_t) & (df['dt'] <= end_t)].copy()
 
-        # 4. MAPOVÁNÍ SLOUPCŮ (volnější hledání)
-        target_cols = {
-            "vystaveno": "Vystaveno",
-            "stav": "Stav",
-            "číslo": "Číslo",
-            "var. symbol": "Variabilní symbol",
-            "forma úhrady": "Forma úhrady",
-            "duzp": "Splatnost",
-            "základ 0%": "Základ 0%",
-            "12%": "DPH - 12%",
-            "21%": "DPH 21%",
-            "celkem bez dph": "Celkem bez DPH",
-            "celkem s dph": "Celkem s DPH"
+        # 4. VÝBĚR A PŘEJMENOVÁNÍ SLOUPCŮ (podle tvého raw souboru)
+        # Používáme přesné názvy, které jsi poslal
+        mapping = {
+            "Vystaveno": "Vystaveno",
+            "Stav": "Stav",
+            "Číslo": "Číslo",
+            "Variabilní symbol": "Variabilní symbol",
+            "Forma úhrady": "Forma úhrady",
+            "DUZP": "Splatnost",
+            "Základ 0%": "Základ 0%",
+            "Základ - snížená sazba 12% (15%)": "Základ 12%",
+            "DPH - snížená sazba 12% (15%)": "DPH 12%",
+            "Základ - základní sazba 21%": "Základ 21%",
+            "DPH - základní sazba 21%": "DPH 21%",
+            "Celkem bez DPH": "Celkem bez DPH",
+            "Celkem s DPH": "Celkem s DPH"
         }
         
-        final_map = {}
-        for key, final_name in target_cols.items():
-            for real_col in df_f.columns:
-                if key in real_col.lower():
-                    final_map[real_col] = final_name
-                    break
-        
-        df_final = df_f[list(final_map.keys())].rename(columns=final_map)
+        available = [c for c in mapping.keys() if c in df_f.columns]
+        df_final = df_f[available].rename(columns=mapping)
 
         # Převod na čísla
         for col in df_final.columns:
-            if any(x in col.lower() for x in ["základ", "dph", "celkem"]):
-                df_final[col] = pd.to_numeric(df_final[col].astype(str).str.replace(',', '.').str.replace('"', ''), errors='coerce').fillna(0)
+            if any(x in col for x in ["Základ", "DPH", "Celkem"]):
+                df_final[col] = pd.to_numeric(df_final[col].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
 
-        # 5. EXPORT
+        # 5. EXPORT DO EXCELU
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             wb, ws = writer.book, writer.book.add_worksheet('Report')
             f_bold, f_num = wb.add_format({'bold': True}), wb.add_format({'num_format': '#,##0.00'})
-            d1_s, d2_s = st_t.strftime("%d.%m."), en_t.strftime("%d.%m.%Y")
-            ws.write('B1', f"Tržba {d1_s} (10:00) až {d2_s} (12:00)", f_bold)
+            
+            d1, d2 = start_t.strftime("%d.%m."), end_t.strftime("%d.%m.%Y")
+            ws.write('B1', f"Tržba ze dne {d1} - {d2}", f_bold)
+            
             df_final.to_excel(writer, sheet_name='Report', index=False, startrow=2)
             
             n_rows = len(df_final)
             if n_rows > 0:
                 fr, lr, sr = 4, 4 + n_rows - 1, 4 + n_rows + 1
-                # SUMIF pro Hotovost a Kartu (E=Forma úhrady, K=Celkem s DPH)
-                ws.write(sr, 2, "Hotovost:", f_bold)
-                ws.write_formula(sr, 3, f'=SUMIF(E{fr}:E{lr}, "*Hotově*", K{fr}:K{lr})', f_num)
-                ws.write(sr + 1, 2, "Kreditní kartou:", f_bold)
-                ws.write_formula(sr + 1, 3, f'=SUMIF(E{fr}:E{lr}, "*Kartou*", K{fr}:K{lr})', f_num)
+                # SUMIF - Forma úhrady (sloupec E), Celkem s DPH (sloupec M/podle počtu sloupců)
+                # Pro jistotu použijeme pevné vzorce na základě tvé struktury
+                ws.write(sr, 2, "Hotovost celkem:", f_bold)
+                ws.write_formula(sr, 3, f'=SUMIF(E{fr}:E{lr}, "*Hotově*", M{fr}:M{lr})', f_num)
+                ws.write(sr + 1, 2, "Karty celkem:", f_bold)
+                ws.write_formula(sr + 1, 3, f'=SUMIF(E{fr}:E{lr}, "*Kartou*", M{fr}:M{lr})', f_num)
 
-        st.success("✅ Report úspěšně vytvořen!")
-        st.download_button(label="📥 Stáhnout Excel", data=output.getvalue(), file_name=f"Report_{d1_s}{d2_s}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.success("✅ Report vygenerován!")
+        st.download_button(label="📥 Stáhnout Excel", data=output.getvalue(), file_name=f"Report_{d1}{d2}.xlsx")
     except Exception as e:
-        st.error(f"Chyba při zpracování: {e}")
+        st.error(f"Chyba: {e}")

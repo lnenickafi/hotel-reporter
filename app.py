@@ -11,23 +11,22 @@ st.write("Nahrajte exportní soubor a stáhněte si upravenou uzávěrku.")
 uploaded_file = st.file_uploader("Vyberte soubor (Excel nebo CSV)", type=["xls", "xlsx", "csv"])
 
 if uploaded_file:
-    # Načtení dat (vylepšená verze s řešením kódování)
+    try:
+        # Načtení dat (řešení kódování pro české CSV)
         try:
-            # 1. Zkusíme klasický Excel (.xlsx, .xls)
             df = pd.read_excel(uploaded_file)
         except:
-            # 2. Pokud to selže, je to CSV. Zkusíme české kódování (Windows-1250)
             try:
-                uploaded_file.seek(0) # Vrátíme se na začátek souboru
+                uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='cp1250', skipinitialspace=True)
             except:
-                # 3. Pokud i to selže, zkusíme standardní UTF-8
                 uploaded_file.seek(0)
                 df = pd.read_csv(uploaded_file, sep=None, engine='python', encoding='utf-8', skipinitialspace=True)
-                
+
+        # Vyčištění hlaviček
         df.columns = [str(c).strip() for c in df.columns]
         
-        # Detekce hlavičky
+        # Detekce hlavičky, pokud je tabulka posunutá
         if 'Vystaveno' not in df.columns:
             for i in range(min(10, len(df))):
                 row_values = [str(x).strip() for x in df.iloc[i].values]
@@ -36,16 +35,17 @@ if uploaded_file:
                     df = df.iloc[i+1:].reset_index(drop=True)
                     break
 
+        # Převod na datum
         df['Vystaveno_dt'] = pd.to_datetime(df['Vystaveno'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['Vystaveno_dt'])
 
-        # Filtrace 10:00 - 12:00
+        # Filtrace 10:00 (Den 1) - 12:00 (Den 2)
         min_date = df['Vystaveno_dt'].min().date()
         start_threshold = datetime.combine(min_date, time(10, 0, 0))
         end_threshold = datetime.combine(min_date + pd.Timedelta(days=1), time(12, 0, 0))
         df_filtered = df[(df['Vystaveno_dt'] >= start_threshold) & (df['Vystaveno_dt'] <= end_threshold)].copy()
 
-        # Sloupce
+        # Sloupce a přejmenování
         cols_mapping = {
             "Vystaveno": "Vystaveno", "Stav": "Stav", "Číslo": "Číslo",
             "Variabilní symbol": "Variabilní symbol", "Forma úhrady": "Forma úhrady",
@@ -57,12 +57,12 @@ if uploaded_file:
         available_cols = [c for c in cols_mapping.keys() if c in df_filtered.columns]
         df_final = df_filtered[available_cols].rename(columns=cols_mapping)
 
-        # Číselné převody
+        # Převod čísel
         for col in ["Základ 0%", "DPH - 12%", "DPH 21%", "Celkem bez DPH", "Celkem s DPH"]:
             if col in df_final.columns:
                 df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
 
-        # Generování Excelu do paměti
+        # Generování Excelu
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             workbook = writer.book
@@ -83,7 +83,7 @@ if uploaded_file:
                 worksheet.write(s_row + 1, 2, "Kreditní kartou:", bold)
                 worksheet.write_formula(s_row + 1, 3, f'=SUMIF(E{f_row}:E{l_row}, "*Kartou*", K{f_row}:K{l_row})', num_fmt)
 
-        st.success("Report připraven!")
+        st.success("Report úspěšně vytvořen!")
         st.download_button(
             label="📥 Stáhnout upravený Excel",
             data=output.getvalue(),

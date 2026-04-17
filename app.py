@@ -1,29 +1,33 @@
 import streamlit as st
 import pandas as pd
 import io
-import chardet  # Knihovna pro detekci kódování
+import chardet
 from datetime import datetime, time
 
-# ... (začátek zůstává stejný až po uploaded_file) ...
+st.set_page_config(page_title="Hotelový Reportér", page_icon="🏨")
+
+st.title("🏨 Hotelový Reportér")
+st.write("Nahrajte exportní soubor a stáhněte si upravenou uzávěrku.")
+
+# TADY DEFINUJEME uploaded_file - tento řádek tam musí být!
+uploaded_file = st.file_uploader("Vyberte soubor (Excel nebo CSV)", type=["xls", "xlsx", "csv"])
 
 if uploaded_file:
     try:
+        # Načtení bajtů ze souboru
         file_bytes = uploaded_file.read()
         
-        # 1. Nejdřív zkusíme, jestli to není OPRAVDOVÝ EXCEL (xlsx/xls)
+        # 1. Pokus o načtení jako opravdový Excel
         try:
             df = pd.read_excel(io.BytesIO(file_bytes))
         except:
-            # 2. Pokud to není Excel, je to textový soubor (CSV/HTML)
-            # Detekujeme kódování automaticky
+            # 2. Detekce kódování pro CSV
             result = chardet.detect(file_bytes)
-            detected_encoding = result['encoding']
+            enc = result['encoding'] if result['encoding'] else 'cp1250'
             
             try:
-                # Zkusíme načíst s detekovaným kódováním
-                df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding=detected_encoding, skipinitialspace=True)
+                df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding=enc, skipinitialspace=True)
             except:
-                # Poslední záchrana: české kódování natvrdo
                 df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding='cp1250', skipinitialspace=True)
 
         # Vyčištění názvů sloupců
@@ -41,39 +45,20 @@ if uploaded_file:
                     break
             
             if not header_found:
-                st.error("V souboru nebyl nalezen sloupec 'Vystaveno'. Zkontrolujte, zda nahráváte správný export.")
-                st.stop()
-
-        # VYČIŠTĚNÍ DAT
-        # Oříznutí mezer z názvů sloupců
-        df.columns = [str(c).strip() for c in df.columns]
-        
-        # Hledání řádku s hlavičkou (pokud jsou nad tabulkou prázdné řádky nebo název "Prodejky")
-        if 'Vystaveno' not in df.columns:
-            found_header = False
-            for i in range(min(15, len(df))):
-                row_values = [str(x).strip() for x in df.iloc[i].values]
-                if 'Vystaveno' in row_values:
-                    df.columns = row_values
-                    df = df.iloc[i+1:].reset_index(drop=True)
-                    found_header = True
-                    break
-            if not found_header:
                 st.error("V souboru nebyl nalezen sloupec 'Vystaveno'.")
                 st.stop()
 
-        # PŘEVOD A FILTRACE
+        # Převod na datum
         df['Vystaveno_dt'] = pd.to_datetime(df['Vystaveno'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['Vystaveno_dt'])
 
-        # Časové okno: 10:00 (Den 1) - 12:00 (Den 2)
+        # Filtrace 10:00 (Den 1) - 12:00 (Den 2)
         min_date = df['Vystaveno_dt'].min().date()
         start_threshold = datetime.combine(min_date, time(10, 0, 0))
         end_threshold = datetime.combine(min_date + pd.Timedelta(days=1), time(12, 0, 0))
-        
         df_filtered = df[(df['Vystaveno_dt'] >= start_threshold) & (df['Vystaveno_dt'] <= end_threshold)].copy()
 
-        # Výběr sloupců
+        # Mapování sloupců
         cols_mapping = {
             "Vystaveno": "Vystaveno", "Stav": "Stav", "Číslo": "Číslo",
             "Variabilní symbol": "Variabilní symbol", "Forma úhrady": "Forma úhrady",
@@ -82,16 +67,16 @@ if uploaded_file:
             "DPH - základní sazba 21%": "DPH 21%",
             "Celkem bez DPH": "Celkem bez DPH", "Celkem s DPH": "Celkem s DPH"
         }
-        
         available_cols = [c for c in cols_mapping.keys() if c in df_filtered.columns]
         df_final = df_filtered[available_cols].rename(columns=cols_mapping)
 
-        # Číselné formáty
-        for col in ["Základ 0%", "DPH - 12%", "DPH 21%", "Celkem bez DPH", "Celkem s DPH"]:
+        # Převod čísel
+        num_cols = ["Základ 0%", "DPH - 12%", "DPH 21%", "Celkem bez DPH", "Celkem s DPH"]
+        for col in num_cols:
             if col in df_final.columns:
                 df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
 
-        # GENEROVÁNÍ EXCELU
+        # Generování Excelu
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             workbook = writer.book
@@ -109,18 +94,15 @@ if uploaded_file:
             if num_rows > 0:
                 f_row, l_row = 4, 4 + num_rows - 1
                 s_row = l_row + 2
+                # Posunuto na sloupce C a D (index 2 a 3)
                 worksheet.write(s_row, 2, "Hotovost:", bold)
                 worksheet.write_formula(s_row, 3, f'=SUMIF(E{f_row}:E{l_row}, "*Hotově*", K{f_row}:K{l_row})', num_fmt)
                 worksheet.write(s_row + 1, 2, "Kreditní kartou:", bold)
                 worksheet.write_formula(s_row + 1, 3, f'=SUMIF(E{f_row}:E{l_row}, "*Kartou*", K{f_row}:K{l_row})', num_fmt)
 
-        st.success("Report je hotový!")
+        st.success("Report připraven!")
         st.download_button(
             label="📥 Stáhnout upravený Excel",
             data=output.getvalue(),
-            file_name=f"Trzba_{min_date}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-    except Exception as e:
-        st.error(f"Chyba při zpracování: {e}")
+            file_name=f"Report_{d1_str}{d2_str}.xlsx",
+            mime="application/vnd.openxmlformats-officed

@@ -13,6 +13,7 @@ uploaded_file = st.file_uploader("Soubor (Excel nebo CSV)", type=["xls", "xlsx",
 if uploaded_file:
     try:
         file_bytes = uploaded_file.read()
+        # 1. NAČTENÍ DAT
         try:
             df = pd.read_excel(io.BytesIO(file_bytes))
         except:
@@ -20,14 +21,23 @@ if uploaded_file:
             enc = res['encoding'] if res['encoding'] else 'cp1250'
             text_data = file_bytes.decode(enc, errors='replace')
             clean_text = "\n".join(text_data.splitlines())
-            df = pd.read_csv(io.StringIO(clean_text), sep=None, engine='python', skipinitialspace=True)
+            # AGRESIVNÍ NAČTENÍ CSV
+            df = pd.read_csv(
+                io.StringIO(clean_text), 
+                sep=None, 
+                engine='python', 
+                skipinitialspace=True,
+                on_bad_lines='skip', # PŘESKOČÍ ROZBITÉ ŘÁDKY
+                quoting=3 # IGNORUJE PROBLÉMOVÉ UVOPOVKY
+            )
 
-        df.columns = [str(c).strip() for c in df.columns]
+        df.columns = [str(c).replace('"', '').strip() for c in df.columns]
 
+        # 2. HLEDÁNÍ HLAVIČKY
         if 'Vystaveno' not in df.columns:
             found = False
-            for i in range(min(20, len(df))):
-                row = [str(val).strip() for val in df.iloc[i].values]
+            for i in range(min(30, len(df))):
+                row = [str(val).replace('"', '').strip() for val in df.iloc[i].values]
                 if 'Vystaveno' in row:
                     df.columns = row
                     df = df.iloc[i+1:].reset_index(drop=True)
@@ -37,13 +47,17 @@ if uploaded_file:
                 st.error("V souboru nebyl nalezen sloupec 'Vystaveno'.")
                 st.stop()
 
+        # 3. FILTRACE (10:00 - 12:00)
+        df['Vystaveno'] = df['Vystaveno'].astype(str).str.replace('"', '')
         df['Vystaveno_dt'] = pd.to_datetime(df['Vystaveno'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['Vystaveno_dt'])
+        
         min_d = df['Vystaveno_dt'].min().date()
         st_t = datetime.combine(min_d, time(10, 0, 0))
         en_t = datetime.combine(min_d + pd.Timedelta(days=1), time(12, 0, 0))
         df_f = df[(df['Vystaveno_dt'] >= st_t) & (df['Vystaveno_dt'] <= en_t)].copy()
 
+        # 4. MAPOVÁNÍ SLOUPCŮ
         mapuj = {
             "Vystaveno": "Vystaveno", "Stav": "Stav", "Číslo": "Číslo",
             "Variabilní symbol": "Variabilní symbol", "Forma úhrady": "Forma úhrady",
@@ -57,22 +71,21 @@ if uploaded_file:
 
         for col in ["Základ 0%", "DPH - 12%", "DPH 21%", "Celkem bez DPH", "Celkem s DPH"]:
             if col in df_final.columns:
+                # Očištění od uvozovek u čísel
+                df_final[col] = df_final[col].astype(str).str.replace('"', '').str.replace(',', '.')
                 df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
 
+        # 5. EXPORT
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            wb = writer.book
-            ws = wb.add_worksheet('Report')
-            f_bold = wb.add_format({'bold': True})
-            f_num = wb.add_format({'num_format': '#,##0.00'})
-            d1_txt = st_t.strftime("%d.%m.")
-            d2_txt = en_t.strftime("%d.%m.%Y")
-            ws.write('B1', f"Tržba ze dne {d1_txt} až {d2_txt}", f_bold)
+            wb, ws = writer.book, writer.book.add_worksheet('Report')
+            f_bold, f_num = wb.add_format({'bold': True}), wb.add_format({'num_format': '#,##0.00'})
+            d1, d2 = st_t.strftime("%d.%m."), en_t.strftime("%d.%m.%Y")
+            ws.write('B1', f"Tržba ze dne {d1} až {d2}", f_bold)
             df_final.to_excel(writer, sheet_name='Report', index=False, startrow=2)
             n_rows = len(df_final)
             if n_rows > 0:
-                fr, lr = 4, 4 + n_rows - 1
-                sr = lr + 2
+                fr, lr, sr = 4, 4 + n_rows - 1, 4 + n_rows + 1
                 f_hot = f'=SUMIF(E{fr}:E{lr}, "*Hotově*", K{fr}:K{lr})'
                 f_kar = f'=SUMIF(E{fr}:E{lr}, "*Kartou*", K{fr}:K{lr})'
                 ws.write(sr, 2, "Hotovost:", f_bold)
@@ -80,7 +93,7 @@ if uploaded_file:
                 ws.write(sr + 1, 2, "Kreditní kartou:", f_bold)
                 ws.write_formula(sr + 1, 3, f_kar, f_num)
 
-        st.success("Report úspěšně vytvořen!")
-        st.download_button(label="📥 Stáhnout Excel", data=output.getvalue(), file_name=f"Report_{d1_txt}{d2_txt}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.success("Report vytvořen!")
+        st.download_button(label="📥 Stáhnout Excel", data=output.getvalue(), file_name=f"Report_{d1}{d2}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     except Exception as e:
         st.error(f"Chyba: {e}")

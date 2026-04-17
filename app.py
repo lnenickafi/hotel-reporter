@@ -17,6 +17,9 @@ Pro správné fungování reportu postupujte takto:
 3. Klikněte na **Soubor** -> **Uložit jako**.
 4. Zvolte formát **Sešit Excel (*.xlsx)** a uložte.
 5. Tento nový soubor nahrajte níže.
+
+- je nutné takto postupovat a převést to do XLSX, jinak to nefunguje. -
+- Časy dokladů to ořezává od 10:00 počátečního dne do 12:00 dalšího dne, kdyby bylo potřeba upravit, dát mi vědět -
 """)
 
 uploaded_file = st.file_uploader("Nahrajte .xlsx soubor", type=["xlsx"])

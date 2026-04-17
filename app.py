@@ -9,8 +9,7 @@ st.set_page_config(page_title="Reportér úzávěrky", page_icon="🏨")
 st.title("🏨 Uzávěrka tržeb")
 
 st.markdown("""
-### Kdyby cokoliv nefungovalo, napsat Filipovi!
-💡 Jak nahrát data správně?
+###💡 Jak nahrát data správně?
 Pro správné fungování reportu postupujte takto:
 1. Vyexportujte data z hotelového systému (soubor `.xls`).
 2. Otevřete tento soubor v **Excelu**.
@@ -18,8 +17,9 @@ Pro správné fungování reportu postupujte takto:
 4. Zvolte formát **Sešit Excel (*.xlsx)** a uložte.
 5. Tento nový soubor nahrajte níže.
 
-- je nutné takto postupovat a převést to do XLSX, jinak to nefunguje. -
-- Časy dokladů to ořezává od 10:00 počátečního dne do 12:00 dalšího dne, kdyby bylo potřeba upravit, dát mi vědět -
+### POZNÁMKY - KDYBY NEFUNGOVALO NAPSAT FILIPOVI
+- Je nutné takto postupovat a převést to do XLSX, jinak to nefunguje.
+- Časy dokladů to ořezává od 10:00 počátečního dne do 12:00 dalšího dne, kdyby bylo potřeba upravit, dát mi vědět 
 """)
 
 uploaded_file = st.file_uploader("Nahrajte .xlsx soubor", type=["xlsx"])

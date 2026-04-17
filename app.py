@@ -1,38 +1,47 @@
 import streamlit as st
 import pandas as pd
 import io
+import chardet  # Knihovna pro detekci kódování
 from datetime import datetime, time
 
-st.set_page_config(page_title="Hotelový Reportér", page_icon="🏨")
-
-st.title("🏨 Hotelový Reportér")
-st.write("Nahrajte exportní soubor a stáhněte si upravenou uzávěrku.")
-
-uploaded_file = st.file_uploader("Vyberte soubor (Excel nebo CSV)", type=["xls", "xlsx", "csv"])
+# ... (začátek zůstává stejný až po uploaded_file) ...
 
 if uploaded_file:
     try:
-        # POKROČILÉ NAČÍTÁNÍ DAT
         file_bytes = uploaded_file.read()
         
+        # 1. Nejdřív zkusíme, jestli to není OPRAVDOVÝ EXCEL (xlsx/xls)
         try:
-            # 1. Pokus o načtení jako standardní Excel (xlsx/xls)
             df = pd.read_excel(io.BytesIO(file_bytes))
         except:
-            # 2. Pokus o načtení jako CSV s různými kódováními
-            encodings = ['cp1250', 'utf-8', 'iso-8859-2', 'latin2']
-            success = False
-            for enc in encodings:
-                try:
-                    df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding=enc, skipinitialspace=True)
-                    if 'Vystaveno' in str(df.columns) or any(df.iloc[:5].astype(str).apply(lambda x: x.str.contains('Vystaveno')).any()):
-                        success = True
-                        break
-                except:
-                    continue
+            # 2. Pokud to není Excel, je to textový soubor (CSV/HTML)
+            # Detekujeme kódování automaticky
+            result = chardet.detect(file_bytes)
+            detected_encoding = result['encoding']
             
-            if not success:
-                st.error("Nepodařilo se rozpoznat formát souboru. Zkuste soubor v Excelu uložit jako 'Sešit Excel (.xlsx)' a nahrát znovu.")
+            try:
+                # Zkusíme načíst s detekovaným kódováním
+                df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding=detected_encoding, skipinitialspace=True)
+            except:
+                # Poslední záchrana: české kódování natvrdo
+                df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding='cp1250', skipinitialspace=True)
+
+        # Vyčištění názvů sloupců
+        df.columns = [str(c).strip() for c in df.columns]
+
+        # Hledání řádku s hlavičkou "Vystaveno"
+        if 'Vystaveno' not in df.columns:
+            header_found = False
+            for i in range(min(20, len(df))):
+                row = [str(val).strip() for val in df.iloc[i].values]
+                if 'Vystaveno' in row:
+                    df.columns = row
+                    df = df.iloc[i+1:].reset_index(drop=True)
+                    header_found = True
+                    break
+            
+            if not header_found:
+                st.error("V souboru nebyl nalezen sloupec 'Vystaveno'. Zkontrolujte, zda nahráváte správný export.")
                 st.stop()
 
         # VYČIŠTĚNÍ DAT

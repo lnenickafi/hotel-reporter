@@ -9,52 +9,49 @@ st.set_page_config(page_title="Hotelový Reportér", page_icon="🏨")
 st.title("🏨 Hotelový Reportér")
 st.write("Nahrajte exportní soubor a stáhněte si upravenou uzávěrku.")
 
-uploaded_file = st.file_uploader("Vyberte soubor (Excel nebo CSV)", type=["xls", "xlsx", "csv"])
+uploaded_file = st.file_uploader("Soubor (Excel nebo CSV)", type=["xls", "xlsx", "csv"])
 
 if uploaded_file:
     try:
         file_bytes = uploaded_file.read()
         
-        # 1. Pokus o načtení jako Excel
+        # 1. Načtení dat
         try:
             df = pd.read_excel(io.BytesIO(file_bytes))
         except:
-            # 2. Detekce kódování pro CSV
-            result = chardet.detect(file_bytes)
-            enc = result['encoding'] if result['encoding'] else 'cp1250'
+            res = chardet.detect(file_bytes)
+            enc = res['encoding'] if res['encoding'] else 'cp1250'
             try:
                 df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding=enc, skipinitialspace=True)
             except:
                 df = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding='cp1250', skipinitialspace=True)
 
-        # Vyčištění názvů sloupců
         df.columns = [str(c).strip() for c in df.columns]
 
-        # Hledání řádku s hlavičkou "Vystaveno"
+        # 2. Hledání hlavičky
         if 'Vystaveno' not in df.columns:
-            header_found = False
+            found = False
             for i in range(min(20, len(df))):
                 row = [str(val).strip() for val in df.iloc[i].values]
                 if 'Vystaveno' in row:
                     df.columns = row
                     df = df.iloc[i+1:].reset_index(drop=True)
-                    header_found = True
+                    found = True
                     break
-            if not header_found:
+            if not found:
                 st.error("V souboru nebyl nalezen sloupec 'Vystaveno'.")
                 st.stop()
 
-        # Převod na datum a filtrace 10:00 (Den 1) - 12:00 (Den 2)
+        # 3. Filtrace (10:00 - 12:00)
         df['Vystaveno_dt'] = pd.to_datetime(df['Vystaveno'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['Vystaveno_dt'])
+        min_d = df['Vystaveno_dt'].min().date()
+        st_t = datetime.combine(min_d, time(10, 0, 0))
+        en_t = datetime.combine(min_d + pd.Timedelta(days=1), time(12, 0, 0))
+        df_f = df[(df['Vystaveno_dt'] >= st_t) & (df['Vystaveno_dt'] <= en_t)].copy()
 
-        min_date = df['Vystaveno_dt'].min().date()
-        start_t = datetime.combine(min_date, time(10, 0, 0))
-        end_t = datetime.combine(min_date + pd.Timedelta(days=1), time(12, 0, 0))
-        df_filtered = df[(df['Vystaveno_dt'] >= start_t) & (df['Vystaveno_dt'] <= end_t)].copy()
-
-        # Mapování sloupců
-        cols_mapping = {
+        # 4. Sloupce
+        mapuj = {
             "Vystaveno": "Vystaveno", "Stav": "Stav", "Číslo": "Číslo",
             "Variabilní symbol": "Variabilní symbol", "Forma úhrady": "Forma úhrady",
             "Splatnost": "Splatnost", "Základ 0%": "Základ 0%",
@@ -62,31 +59,44 @@ if uploaded_file:
             "DPH - základní sazba 21%": "DPH 21%",
             "Celkem bez DPH": "Celkem bez DPH", "Celkem s DPH": "Celkem s DPH"
         }
-        available_cols = [c for c in cols_mapping.keys() if c in df_filtered.columns]
-        df_final = df_filtered[available_cols].rename(columns=cols_mapping)
+        avail = [c for c in mapuj.keys() if c in df_f.columns]
+        df_final = df_f[avail].rename(columns=mapuj)
 
-        # Převod čísel
-        num_cols = ["Základ 0%", "DPH - 12%", "DPH 21%", "Celkem bez DPH", "Celkem s DPH"]
-        for col in num_cols:
+        for col in ["Základ 0%", "DPH - 12%", "DPH 21%", "Celkem bez DPH", "Celkem s DPH"]:
             if col in df_final.columns:
                 df_final[col] = pd.to_numeric(df_final[col], errors='coerce').fillna(0)
 
-        # Generování Excelu
+        # 5. Excel export
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            workbook = writer.book
-            worksheet = workbook.add_worksheet('Report')
-            bold = workbook.add_format({'bold': True})
-            num_fmt = workbook.add_format({'num_format': '#,##0.00'})
+            wb = writer.book
+            ws = wb.add_worksheet('Report')
+            f_bold = wb.add_format({'bold': True})
+            f_num = wb.add_format({'num_format': '#,##0.00'})
             
-            d1_str = start_t.strftime("%d.%m.")
-            d2_str = end_t.strftime("%d.%m.%Y")
-            worksheet.write('B1', f"Tržba ze dne {d1_str} až {d2_str}", bold)
+            d1, d2 = st_t.strftime("%d.%m."), en_t.strftime("%d.%m.%Y")
+            ws.write('B1', f"Tržba ze dne {d1} až {d2}", f_bold)
             df_final.to_excel(writer, sheet_name='Report', index=False, startrow=2)
             
-            num_rows = len(df_final)
-            if num_rows > 0:
-                f_row, l_row = 4, 4 + num_rows - 1
-                s_row = l_row + 2
-                worksheet.write(s_row, 2, "Hotovost:", bold)
-                worksheet.write_formula(s_row, 3, f'=SUMIF(E{f_row}:E{l_row}, "*Hotově*", K{f_row}:K{l_row
+            n_rows = len(df_final)
+            if n_rows > 0:
+                fr, lr = 4, 4 + n_rows - 1
+                sr = lr + 2
+                # Vzorce SUMIF
+                f_hot = f'=SUMIF(E{fr}:E{lr}, "*Hotově*", K{fr}:K{lr})'
+                f_kar = f'=SUMIF(E{fr}:E{lr}, "*Kartou*", K{fr}:K{lr})'
+                
+                ws.write(sr, 2, "Hotovost:", f_bold)
+                ws.write_formula(sr, 3, f_hot, f_num)
+                ws.write(sr + 1, 2, "Kreditní kartou:", f_bold)
+                ws.write_formula(sr + 1, 3, f_kar, f_num)
+
+        st.success("Hotovo!")
+        st.download_button(
+            label="📥 Stáhnout Excel",
+            data=output.getvalue(),
+            file_name=f"Report_{d1}{d2}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        st.error(f"Chyba: {e}")
